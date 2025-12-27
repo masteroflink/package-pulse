@@ -27,7 +27,10 @@ jobs:
             const labels = context.payload.issue.labels || [];
             const labelIds = [];
 
+            // Process labels sequentially to avoid race conditions
             for (const label of labels) {
+              console.log(`Processing label: ${label.name}`);
+
               const searchQuery = `{
                 issueLabels(filter: { name: { eq: "${label.name}" } }) {
                   nodes { id name }
@@ -44,9 +47,12 @@ jobs:
               });
 
               const searchResult = await searchResponse.json();
+              console.log(`Search result for ${label.name}:`, JSON.stringify(searchResult));
 
               if (searchResult.data?.issueLabels?.nodes?.length > 0) {
-                labelIds.push(searchResult.data.issueLabels.nodes[0].id);
+                const labelId = searchResult.data.issueLabels.nodes[0].id;
+                labelIds.push(labelId);
+                console.log(`Found existing label ${label.name} with ID: ${labelId}`);
               } else {
                 const color = label.color ? `#${label.color}` : '#888888';
                 const createLabelQuery = `
@@ -72,12 +78,19 @@ jobs:
                 });
 
                 const createResult = await createResponse.json();
+                console.log(`Create label result for ${label.name}:`, JSON.stringify(createResult));
+
                 if (createResult.data?.issueLabelCreate?.success) {
-                  labelIds.push(createResult.data.issueLabelCreate.issueLabel.id);
-                  console.log(`Created label: ${label.name}`);
+                  const labelId = createResult.data.issueLabelCreate.issueLabel.id;
+                  labelIds.push(labelId);
+                  console.log(`Created label ${label.name} with ID: ${labelId}`);
+                } else {
+                  console.error(`Failed to create label ${label.name}`);
                 }
               }
             }
+
+            console.log(`Final labelIds array: ${JSON.stringify(labelIds)}`);
 
             // Build input object
             const input = {
@@ -90,6 +103,8 @@ jobs:
             if (labelIds.length > 0) {
               input.labelIds = labelIds;
             }
+
+            console.log(`Creating Linear issue with input:`, JSON.stringify(input));
 
             const createQuery = `
               mutation CreateIssue($input: IssueCreateInput!) {
@@ -114,18 +129,11 @@ jobs:
             });
 
             const result = await response.json();
+            console.log(`Create issue result:`, JSON.stringify(result));
 
             if (result.data?.issueCreate?.success) {
               const issue = result.data.issueCreate.issue;
               console.log(`Created Linear issue: ${issue.identifier}`);
-
-              // Comment on GitHub issue with Linear link
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                body: `🔗 Linked to Linear: [${issue.identifier}](${issue.url})`
-              });
             } else {
               console.error('Failed to create Linear issue:', JSON.stringify(result, null, 2));
               core.setFailed('Failed to create Linear issue');
@@ -145,6 +153,8 @@ jobs:
           script: |
             const issueNumber = context.payload.issue.number;
             const label = context.payload.label;
+
+            console.log(`Syncing label ${label.name} for issue #${issueNumber}`);
 
             // Find linked Linear issue
             const searchQuery = `{
@@ -170,6 +180,8 @@ jobs:
               return;
             }
 
+            console.log(`Found linked Linear issue: ${linearIssue.identifier}`);
+
             // Find or create the label
             const labelSearchQuery = `{
               issueLabels(filter: { name: { eq: "${label.name}" } }) {
@@ -191,6 +203,7 @@ jobs:
 
             if (labelSearchResult.data?.issueLabels?.nodes?.length > 0) {
               labelId = labelSearchResult.data.issueLabels.nodes[0].id;
+              console.log(`Found existing label with ID: ${labelId}`);
             } else {
               const color = label.color ? `#${label.color}` : '#888888';
               const createLabelQuery = `
@@ -217,7 +230,7 @@ jobs:
 
               const createResult = await createResponse.json();
               labelId = createResult.data?.issueLabelCreate?.issueLabel?.id;
-              console.log(`Created label: ${label.name}`);
+              console.log(`Created label with ID: ${labelId}`);
             }
 
             if (labelId) {
@@ -229,7 +242,7 @@ jobs:
                 }
               `;
 
-              await fetch('https://api.linear.app/graphql', {
+              const addResponse = await fetch('https://api.linear.app/graphql', {
                 method: 'POST',
                 headers: {
                   'Authorization': process.env.LINEAR_API_KEY,
@@ -238,7 +251,8 @@ jobs:
                 body: JSON.stringify({ query: addLabelQuery })
               });
 
-              console.log(`Added label ${label.name} to ${linearIssue.identifier}`);
+              const addResult = await addResponse.json();
+              console.log(`Add label result:`, JSON.stringify(addResult));
             }
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
