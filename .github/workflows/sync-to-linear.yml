@@ -27,7 +27,6 @@ jobs:
               console.log(`Processing label: ${label.name}`);
 
               try {
-                // Search for label within the team
                 const searchQuery = `{
                   team(id: "${process.env.LINEAR_TEAM_ID}") {
                     labels(filter: { name: { eq: "${label.name}" } }) {
@@ -47,17 +46,11 @@ jobs:
 
                 if (!searchResponse.ok) {
                   console.error(`Team label search HTTP error: ${searchResponse.status} ${searchResponse.statusText}`);
-                  const text = await searchResponse.text();
-                  console.error(`Response body: ${text}`);
                   continue;
                 }
 
                 const searchResult = await searchResponse.json();
                 console.log(`Team label search result for ${label.name}:`, JSON.stringify(searchResult, null, 2));
-
-                if (searchResult.errors) {
-                  console.error(`GraphQL errors in team search:`, JSON.stringify(searchResult.errors, null, 2));
-                }
 
                 if (searchResult.data?.team?.labels?.nodes?.length > 0) {
                   const labelId = searchResult.data.team.labels.nodes[0].id;
@@ -66,7 +59,6 @@ jobs:
                   continue;
                 }
 
-                // Check workspace-level labels
                 const workspaceQuery = `{
                   issueLabels(filter: { name: { eq: "${label.name}" } }) {
                     nodes { id name }
@@ -83,18 +75,12 @@ jobs:
                 });
 
                 if (!wsResponse.ok) {
-                  console.error(`Workspace label search HTTP error: ${wsResponse.status} ${wsResponse.statusText}`);
-                  const text = await wsResponse.text();
-                  console.error(`Response body: ${text}`);
+                  console.error(`Workspace label search HTTP error: ${wsResponse.status}`);
                   continue;
                 }
 
                 const wsResult = await wsResponse.json();
                 console.log(`Workspace label search result for ${label.name}:`, JSON.stringify(wsResult, null, 2));
-
-                if (wsResult.errors) {
-                  console.error(`GraphQL errors in workspace search:`, JSON.stringify(wsResult.errors, null, 2));
-                }
 
                 if (wsResult.data?.issueLabels?.nodes?.length > 0) {
                   const labelId = wsResult.data.issueLabels.nodes[0].id;
@@ -103,7 +89,6 @@ jobs:
                   continue;
                 }
 
-                // Create the label
                 console.log(`Label ${label.name} not found, creating...`);
                 const color = label.color ? `#${label.color}` : '#888888';
                 const createLabelQuery = `
@@ -129,30 +114,23 @@ jobs:
                 });
 
                 if (!createResponse.ok) {
-                  console.error(`Create label HTTP error: ${createResponse.status} ${createResponse.statusText}`);
-                  const text = await createResponse.text();
-                  console.error(`Response body: ${text}`);
+                  console.error(`Create label HTTP error: ${createResponse.status}`);
                   continue;
                 }
 
                 const createResult = await createResponse.json();
                 console.log(`Create label result for ${label.name}:`, JSON.stringify(createResult, null, 2));
 
-                if (createResult.errors) {
-                  console.error(`GraphQL errors creating label:`, JSON.stringify(createResult.errors, null, 2));
-                }
-
                 if (createResult.data?.issueLabelCreate?.success) {
                   const labelId = createResult.data.issueLabelCreate.issueLabel.id;
                   labelIds.push(labelId);
                   console.log(`Created label ${label.name} with ID: ${labelId}`);
                 } else {
-                  console.error(`Failed to create label ${label.name}. Success: ${createResult.data?.issueLabelCreate?.success}`);
+                  console.error(`Failed to create label ${label.name}:`, JSON.stringify(createResult, null, 2));
                 }
 
               } catch (error) {
                 console.error(`Exception processing label ${label.name}:`, error.message);
-                console.error(error.stack);
               }
             }
 
@@ -196,8 +174,6 @@ jobs:
 
               if (!response.ok) {
                 console.error(`Create issue HTTP error: ${response.status} ${response.statusText}`);
-                const text = await response.text();
-                console.error(`Response body: ${text}`);
                 core.setFailed('HTTP error creating Linear issue');
                 return;
               }
@@ -221,7 +197,6 @@ jobs:
 
             } catch (error) {
               console.error(`Exception creating issue:`, error.message);
-              console.error(error.stack);
               core.setFailed(`Exception: ${error.message}`);
             }
         env:
@@ -230,9 +205,7 @@ jobs:
           LINEAR_PROJECT_ID: ${{ secrets.LINEAR_PROJECT_ID }}
 
   sync-label-to-linear:
-    if: github.event_name == 'issues' && github.event.action == 'labeled'
     needs: [create-linear-issue]
-    # Always run even if create-linear-issue was skipped (issue already exists)
     if: always() && github.event_name == 'issues' && github.event.action == 'labeled'
     runs-on: ubuntu-latest
     steps:
@@ -247,10 +220,8 @@ jobs:
             const label = context.payload.label;
 
             console.log(`Syncing label "${label.name}" for issue #${issueNumber}`);
-            console.log(`Label details:`, JSON.stringify(label, null, 2));
 
             try {
-              // Find linked Linear issue
               const searchQuery = `{
                 issues(filter: { description: { contains: "GitHub Issue #${issueNumber}]" } }) {
                   nodes { id identifier }
@@ -268,17 +239,11 @@ jobs:
 
               if (!searchResponse.ok) {
                 console.error(`Issue search HTTP error: ${searchResponse.status} ${searchResponse.statusText}`);
-                const text = await searchResponse.text();
-                console.error(`Response body: ${text}`);
                 return;
               }
 
               const searchResult = await searchResponse.json();
               console.log(`Issue search result:`, JSON.stringify(searchResult, null, 2));
-
-              if (searchResult.errors) {
-                console.error(`GraphQL errors:`, JSON.stringify(searchResult.errors, null, 2));
-              }
 
               const linearIssue = searchResult.data?.issues?.nodes?.[0];
 
@@ -289,7 +254,6 @@ jobs:
 
               console.log(`Found linked Linear issue: ${linearIssue.identifier}`);
 
-              // Search for label in team
               const teamLabelQuery = `{
                 team(id: "${process.env.LINEAR_TEAM_ID}") {
                   labels(filter: { name: { eq: "${label.name}" } }) {
@@ -308,18 +272,12 @@ jobs:
               });
 
               if (!teamLabelResponse.ok) {
-                console.error(`Team label search HTTP error: ${teamLabelResponse.status} ${teamLabelResponse.statusText}`);
-                const text = await teamLabelResponse.text();
-                console.error(`Response body: ${text}`);
+                console.error(`Team label search HTTP error: ${teamLabelResponse.status}`);
                 return;
               }
 
               const teamLabelResult = await teamLabelResponse.json();
               console.log(`Team label search result:`, JSON.stringify(teamLabelResult, null, 2));
-
-              if (teamLabelResult.errors) {
-                console.error(`GraphQL errors:`, JSON.stringify(teamLabelResult.errors, null, 2));
-              }
 
               let labelId;
 
@@ -327,7 +285,6 @@ jobs:
                 labelId = teamLabelResult.data.team.labels.nodes[0].id;
                 console.log(`Found team label with ID: ${labelId}`);
               } else {
-                // Check workspace-level labels
                 const workspaceLabelQuery = `{
                   issueLabels(filter: { name: { eq: "${label.name}" } }) {
                     nodes { id name }
@@ -344,24 +301,17 @@ jobs:
                 });
 
                 if (!wsResponse.ok) {
-                  console.error(`Workspace label search HTTP error: ${wsResponse.status} ${wsResponse.statusText}`);
-                  const text = await wsResponse.text();
-                  console.error(`Response body: ${text}`);
+                  console.error(`Workspace label search HTTP error: ${wsResponse.status}`);
                   return;
                 }
 
                 const wsResult = await wsResponse.json();
                 console.log(`Workspace label search result:`, JSON.stringify(wsResult, null, 2));
 
-                if (wsResult.errors) {
-                  console.error(`GraphQL errors:`, JSON.stringify(wsResult.errors, null, 2));
-                }
-
                 if (wsResult.data?.issueLabels?.nodes?.length > 0) {
                   labelId = wsResult.data.issueLabels.nodes[0].id;
                   console.log(`Found workspace label with ID: ${labelId}`);
                 } else {
-                  // Create the label
                   console.log(`Label "${label.name}" not found, creating...`);
                   const color = label.color ? `#${label.color}` : '#888888';
 
@@ -388,24 +338,18 @@ jobs:
                   });
 
                   if (!createResponse.ok) {
-                    console.error(`Create label HTTP error: ${createResponse.status} ${createResponse.statusText}`);
-                    const text = await createResponse.text();
-                    console.error(`Response body: ${text}`);
+                    console.error(`Create label HTTP error: ${createResponse.status}`);
                     return;
                   }
 
                   const createResult = await createResponse.json();
                   console.log(`Create label result:`, JSON.stringify(createResult, null, 2));
 
-                  if (createResult.errors) {
-                    console.error(`GraphQL errors creating label:`, JSON.stringify(createResult.errors, null, 2));
-                  }
-
                   if (createResult.data?.issueLabelCreate?.success) {
                     labelId = createResult.data.issueLabelCreate.issueLabel.id;
                     console.log(`Created label with ID: ${labelId}`);
                   } else {
-                    console.error(`Failed to create label. Full response:`, JSON.stringify(createResult, null, 2));
+                    console.error(`Failed to create label:`, JSON.stringify(createResult, null, 2));
                     return;
                   }
                 }
@@ -432,31 +376,22 @@ jobs:
                 });
 
                 if (!addResponse.ok) {
-                  console.error(`Add label HTTP error: ${addResponse.status} ${addResponse.statusText}`);
-                  const text = await addResponse.text();
-                  console.error(`Response body: ${text}`);
+                  console.error(`Add label HTTP error: ${addResponse.status}`);
                   return;
                 }
 
                 const addResult = await addResponse.json();
                 console.log(`Add label result:`, JSON.stringify(addResult, null, 2));
 
-                if (addResult.errors) {
-                  console.error(`GraphQL errors adding label:`, JSON.stringify(addResult.errors, null, 2));
-                }
-
                 if (addResult.data?.issueAddLabel?.success) {
                   console.log(`Successfully added label "${label.name}" to ${linearIssue.identifier}`);
                 } else {
-                  console.error(`Failed to add label. Success: ${addResult.data?.issueAddLabel?.success}`);
+                  console.error(`Failed to add label:`, JSON.stringify(addResult, null, 2));
                 }
-              } else {
-                console.error(`Could not find or create label: ${label.name}`);
               }
 
             } catch (error) {
               console.error(`Exception:`, error.message);
-              console.error(error.stack);
             }
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
@@ -498,19 +433,11 @@ jobs:
               });
 
               if (!searchResponse.ok) {
-                console.error(`Issue search HTTP error: ${searchResponse.status} ${searchResponse.statusText}`);
-                const text = await searchResponse.text();
-                console.error(`Response body: ${text}`);
+                console.error(`Issue search HTTP error: ${searchResponse.status}`);
                 return;
               }
 
               const searchResult = await searchResponse.json();
-              console.log(`Issue search result:`, JSON.stringify(searchResult, null, 2));
-
-              if (searchResult.errors) {
-                console.error(`GraphQL errors:`, JSON.stringify(searchResult.errors, null, 2));
-              }
-
               const linearIssue = searchResult.data?.issues?.nodes?.[0];
 
               if (!linearIssue) {
@@ -547,28 +474,21 @@ jobs:
               });
 
               if (!response.ok) {
-                console.error(`Create comment HTTP error: ${response.status} ${response.statusText}`);
-                const text = await response.text();
-                console.error(`Response body: ${text}`);
+                console.error(`Create comment HTTP error: ${response.status}`);
                 return;
               }
 
               const result = await response.json();
               console.log(`Create comment result:`, JSON.stringify(result, null, 2));
 
-              if (result.errors) {
-                console.error(`GraphQL errors:`, JSON.stringify(result.errors, null, 2));
-              }
-
               if (result.data?.commentCreate?.success) {
                 console.log(`Successfully synced comment to ${linearIssue.identifier}`);
               } else {
-                console.error(`Failed to create comment. Success: ${result.data?.commentCreate?.success}`);
+                console.error(`Failed to create comment:`, JSON.stringify(result, null, 2));
               }
 
             } catch (error) {
               console.error(`Exception:`, error.message);
-              console.error(error.stack);
             }
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
