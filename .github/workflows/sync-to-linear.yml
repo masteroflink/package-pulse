@@ -27,11 +27,10 @@ jobs:
               console.log(`Processing label: ${label.name}`);
 
               try {
+                // Search for label using containsIgnoreCase for case-insensitive match
                 const searchQuery = `{
-                  team(id: "${process.env.LINEAR_TEAM_ID}") {
-                    labels(filter: { name: { eq: "${label.name}" } }) {
-                      nodes { id name }
-                    }
+                  issueLabels(filter: { name: { containsIgnoreCase: "${label.name}" } }) {
+                    nodes { id name }
                   }
                 }`;
 
@@ -45,50 +44,25 @@ jobs:
                 });
 
                 if (!searchResponse.ok) {
-                  console.error(`Team label search HTTP error: ${searchResponse.status} ${searchResponse.statusText}`);
+                  console.error(`Label search HTTP error: ${searchResponse.status} ${searchResponse.statusText}`);
                   continue;
                 }
 
                 const searchResult = await searchResponse.json();
-                console.log(`Team label search result for ${label.name}:`, JSON.stringify(searchResult, null, 2));
+                console.log(`Label search result for ${label.name}:`, JSON.stringify(searchResult, null, 2));
 
-                if (searchResult.data?.team?.labels?.nodes?.length > 0) {
-                  const labelId = searchResult.data.team.labels.nodes[0].id;
-                  labelIds.push(labelId);
-                  console.log(`Found existing team label ${label.name} with ID: ${labelId}`);
+                // Find exact match (case-insensitive)
+                const existingLabel = searchResult.data?.issueLabels?.nodes?.find(
+                  l => l.name.toLowerCase() === label.name.toLowerCase()
+                );
+
+                if (existingLabel) {
+                  labelIds.push(existingLabel.id);
+                  console.log(`Found existing label "${existingLabel.name}" with ID: ${existingLabel.id}`);
                   continue;
                 }
 
-                const workspaceQuery = `{
-                  issueLabels(filter: { name: { eq: "${label.name}" } }) {
-                    nodes { id name }
-                  }
-                }`;
-
-                const wsResponse = await fetch('https://api.linear.app/graphql', {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': process.env.LINEAR_API_KEY,
-                    'Content-Type': 'application/json'
-                  },
-                  body: JSON.stringify({ query: workspaceQuery })
-                });
-
-                if (!wsResponse.ok) {
-                  console.error(`Workspace label search HTTP error: ${wsResponse.status}`);
-                  continue;
-                }
-
-                const wsResult = await wsResponse.json();
-                console.log(`Workspace label search result for ${label.name}:`, JSON.stringify(wsResult, null, 2));
-
-                if (wsResult.data?.issueLabels?.nodes?.length > 0) {
-                  const labelId = wsResult.data.issueLabels.nodes[0].id;
-                  labelIds.push(labelId);
-                  console.log(`Found existing workspace label ${label.name} with ID: ${labelId}`);
-                  continue;
-                }
-
+                // Create the label if not found
                 console.log(`Label ${label.name} not found, creating...`);
                 const color = label.color ? `#${label.color}` : '#888888';
                 const createLabelQuery = `
@@ -254,104 +228,80 @@ jobs:
 
               console.log(`Found linked Linear issue: ${linearIssue.identifier}`);
 
-              const teamLabelQuery = `{
-                team(id: "${process.env.LINEAR_TEAM_ID}") {
-                  labels(filter: { name: { eq: "${label.name}" } }) {
-                    nodes { id name }
-                  }
+              // Search for label using containsIgnoreCase for case-insensitive match
+              const labelSearchQuery = `{
+                issueLabels(filter: { name: { containsIgnoreCase: "${label.name}" } }) {
+                  nodes { id name }
                 }
               }`;
 
-              const teamLabelResponse = await fetch('https://api.linear.app/graphql', {
+              const labelSearchResponse = await fetch('https://api.linear.app/graphql', {
                 method: 'POST',
                 headers: {
                   'Authorization': process.env.LINEAR_API_KEY,
                   'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ query: teamLabelQuery })
+                body: JSON.stringify({ query: labelSearchQuery })
               });
 
-              if (!teamLabelResponse.ok) {
-                console.error(`Team label search HTTP error: ${teamLabelResponse.status}`);
+              if (!labelSearchResponse.ok) {
+                console.error(`Label search HTTP error: ${labelSearchResponse.status}`);
                 return;
               }
 
-              const teamLabelResult = await teamLabelResponse.json();
-              console.log(`Team label search result:`, JSON.stringify(teamLabelResult, null, 2));
+              const labelSearchResult = await labelSearchResponse.json();
+              console.log(`Label search result:`, JSON.stringify(labelSearchResult, null, 2));
+
+              // Find exact match (case-insensitive)
+              let existingLabel = labelSearchResult.data?.issueLabels?.nodes?.find(
+                l => l.name.toLowerCase() === label.name.toLowerCase()
+              );
 
               let labelId;
 
-              if (teamLabelResult.data?.team?.labels?.nodes?.length > 0) {
-                labelId = teamLabelResult.data.team.labels.nodes[0].id;
-                console.log(`Found team label with ID: ${labelId}`);
+              if (existingLabel) {
+                labelId = existingLabel.id;
+                console.log(`Found existing label "${existingLabel.name}" with ID: ${labelId}`);
               } else {
-                const workspaceLabelQuery = `{
-                  issueLabels(filter: { name: { eq: "${label.name}" } }) {
-                    nodes { id name }
-                  }
-                }`;
+                console.log(`Label "${label.name}" not found, creating...`);
+                const color = label.color ? `#${label.color}` : '#888888';
 
-                const wsResponse = await fetch('https://api.linear.app/graphql', {
+                const createLabelQuery = `
+                  mutation {
+                    issueLabelCreate(input: {
+                      teamId: "${process.env.LINEAR_TEAM_ID}"
+                      name: "${label.name}"
+                      color: "${color}"
+                    }) {
+                      success
+                      issueLabel { id name }
+                    }
+                  }
+                `;
+
+                const createResponse = await fetch('https://api.linear.app/graphql', {
                   method: 'POST',
                   headers: {
                     'Authorization': process.env.LINEAR_API_KEY,
                     'Content-Type': 'application/json'
                   },
-                  body: JSON.stringify({ query: workspaceLabelQuery })
+                  body: JSON.stringify({ query: createLabelQuery })
                 });
 
-                if (!wsResponse.ok) {
-                  console.error(`Workspace label search HTTP error: ${wsResponse.status}`);
+                if (!createResponse.ok) {
+                  console.error(`Create label HTTP error: ${createResponse.status}`);
                   return;
                 }
 
-                const wsResult = await wsResponse.json();
-                console.log(`Workspace label search result:`, JSON.stringify(wsResult, null, 2));
+                const createResult = await createResponse.json();
+                console.log(`Create label result:`, JSON.stringify(createResult, null, 2));
 
-                if (wsResult.data?.issueLabels?.nodes?.length > 0) {
-                  labelId = wsResult.data.issueLabels.nodes[0].id;
-                  console.log(`Found workspace label with ID: ${labelId}`);
+                if (createResult.data?.issueLabelCreate?.success) {
+                  labelId = createResult.data.issueLabelCreate.issueLabel.id;
+                  console.log(`Created label with ID: ${labelId}`);
                 } else {
-                  console.log(`Label "${label.name}" not found, creating...`);
-                  const color = label.color ? `#${label.color}` : '#888888';
-
-                  const createLabelQuery = `
-                    mutation {
-                      issueLabelCreate(input: {
-                        teamId: "${process.env.LINEAR_TEAM_ID}"
-                        name: "${label.name}"
-                        color: "${color}"
-                      }) {
-                        success
-                        issueLabel { id name }
-                      }
-                    }
-                  `;
-
-                  const createResponse = await fetch('https://api.linear.app/graphql', {
-                    method: 'POST',
-                    headers: {
-                      'Authorization': process.env.LINEAR_API_KEY,
-                      'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ query: createLabelQuery })
-                  });
-
-                  if (!createResponse.ok) {
-                    console.error(`Create label HTTP error: ${createResponse.status}`);
-                    return;
-                  }
-
-                  const createResult = await createResponse.json();
-                  console.log(`Create label result:`, JSON.stringify(createResult, null, 2));
-
-                  if (createResult.data?.issueLabelCreate?.success) {
-                    labelId = createResult.data.issueLabelCreate.issueLabel.id;
-                    console.log(`Created label with ID: ${labelId}`);
-                  } else {
-                    console.error(`Failed to create label:`, JSON.stringify(createResult, null, 2));
-                    return;
-                  }
+                  console.error(`Failed to create label:`, JSON.stringify(createResult, null, 2));
+                  return;
                 }
               }
 
